@@ -1,235 +1,281 @@
-import os
-import json
-import logging
+import os, json, logging, shutil
 from flask import Flask
-from threading import Thread, Lock
-from telegram import ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
+from threading import Thread
+from telegram import ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters
+from datetime import datetime
 
-# -------- تنظیمات --------
-TOKEN = "8681405252:AAH7ONTudaE34evtbxWeLdk0dtZc_XkULEA"
-ADMIN_ID = 5993860770
-DB_FILE = "db.json"
+# ---------- تنظیمات ----------
+TOKEN = "8765075222:AAFT6p_zeYmEcahPoezxtUeqMlsGz0Ra35o"
+DB_FILE = "data.json"
+BACKUP_DIR = "backups"
 
-# -------- لاگ --------
+# ادمین‌ها (اولی ادمین اصلی)
+DEFAULT_ADMINS = [5993860770]
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# -------- لاک (خیلی مهم برای جلوگیری از دابل مصرف) --------
-lock = Lock()
-
-# -------- وب سرور برای Railway --------
+# ---------- وب سرور ----------
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Reseller Bot Running ✅"
+    return "Bot Running", 200
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
-# -------- دیتابیس --------
+# ---------- دیتابیس ----------
 def load_db():
     if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f:
-            return json.load(f)
-    return {
-        "plans": {
-            "5GB": {"active": True},
-            "10GB": {"active": True}
-        },
-        "inventory": {
-            "5GB": [],
-            "10GB": []
-        },
-        "vouchers": {},
-        "resellers": {}
-    }
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = {
+            "users": {},
+            "admins": DEFAULT_ADMINS.copy(),
+            "categories": {
+                "🚀": [
+                    {"id": 1, "name": "پلن 20GB", "price": 80, "volume": "20GB", "days": 30}
+                ]
+            },
+            "configs": {},
+            "wallet_settings": {"amounts": [100000,300000,700000,1500000,2000000]},
+            "card": {"number": "0000000000000000", "name": "NAME"}
+        }
+
+    # تضمین فیلدها
+    data.setdefault("admins", DEFAULT_ADMINS.copy())
+    data.setdefault("configs", {})
+    data.setdefault("wallet_settings", {"amounts":[100000,300000,700000,1500000,2000000]})
+    data.setdefault("users", {})
+    return data
 
 def save_db():
-    with open(DB_FILE, "w") as f:
-        json.dump(db, f, indent=2)
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
 
 db = load_db()
-user_state = {}
+user_data = {}
 
-# -------- منو --------
-def reseller_menu():
-    return ReplyKeyboardMarkup([
-        ['📦 موجودی من'],
-        ['⚙️ ساخت کانفیگ']
-    ], resize_keyboard=True)
+def is_admin(uid):
+    return int(uid) in db.get("admins", [])
+
+def is_owner(uid):
+    admins = db.get("admins", [])
+    return admins and int(uid) == int(admins[0])
+
+# ---------- منو ----------
+def main_menu(uid):
+    kb = [
+        ['💰 خرید', '💳 کیف پول'],
+        ['📂 سرویس‌ها']
+    ]
+    if is_admin(uid):
+        kb.append(['⚙️ مدیریت'])
+    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
 def admin_menu():
-    return ReplyKeyboardMarkup([
-        ['➕ افزودن کانفیگ'],
-        ['🎟 ساخت واچر']
-    ], resize_keyboard=True)
+    kb = [
+        ['➕ افزودن ادمین', '➕ افزودن کانفیگ'],
+        ['💾 بکاپ', '📤 ریستور بکاپ'],
+        ['🔙 برگشت']
+    ]
+    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
-# -------- استارت --------
+def back_btn():
+    return ReplyKeyboardMarkup([['🔙 برگشت']], resize_keyboard=True)
+
+# ---------- استارت ----------
 def start(update, context):
     uid = str(update.effective_user.id)
 
-    if uid not in db["resellers"]:
-        db["resellers"][uid] = {"stock": {}, "used": {}}
+    if uid not in db["users"]:
+        db["users"][uid] = {
+            "wallet": 0,
+            "purchases": []
+        }
         save_db()
 
-    update.message.reply_text(
-        "🔐 ورود به پنل نمایندگی\n\nکد واچر رو بفرست:",
-    )
+    update.message.reply_text("خوش آمدید", reply_markup=main_menu(uid))
 
-# -------- پیام --------
+# ---------- پیام ----------
 def handle_msg(update, context):
     text = update.message.text
     uid = str(update.effective_user.id)
+    step = user_data.get(uid, {}).get("step")
 
-    # -------- ادمین --------
-    if str(uid) == str(ADMIN_ID):
+    if text == '🔙 برگشت':
+        user_data[uid] = {}
+        start(update, context)
+        return
 
-        if text == '➕ افزودن کانفیگ':
-            user_state[uid] = {"step": "add_plan"}
-            update.message.reply_text("نام پلن؟ (مثلاً 5GB)")
+    # ---------- کیف پول ----------
+    if text == '💳 کیف پول':
+        bal = db["users"][uid]["wallet"]
+        btn = []
+        for a in db["wallet_settings"]["amounts"]:
+            btn.append([InlineKeyboardButton(f"{a:,} تومان", callback_data=f"wallet_{a}")])
+        btn.append([InlineKeyboardButton("💵 مبلغ دلخواه", callback_data="wallet_custom")])
+
+        update.message.reply_text(
+            f"💰 موجودی شما: {bal:,}",
+            reply_markup=InlineKeyboardMarkup(btn)
+        )
+        return
+
+    if step == 'wallet_custom':
+        try:
+            amount = int(text)
+            if 50000 <= amount <= 5000000:
+                user_data[uid] = {"step": "wallet_pay", "amount": amount}
+                update.message.reply_text(f"پرداخت {amount:,} به کارت:\n{db['card']['number']}")
+            else:
+                update.message.reply_text("❌ بین 50 هزار تا 5 میلیون")
+        except:
+            update.message.reply_text("❌ عدد")
+        return
+
+    # ---------- مدیریت ----------
+    if text == '⚙️ مدیریت' and is_admin(uid):
+        update.message.reply_text("پنل مدیریت", reply_markup=admin_menu())
+        return
+
+    # افزودن ادمین
+    if text == '➕ افزودن ادمین':
+        if not is_owner(uid):
+            update.message.reply_text("❌ فقط ادمین اصلی")
             return
+        user_data[uid] = {"step": "add_admin"}
+        update.message.reply_text("آیدی عددی:")
+        return
 
-        if text == '🎟 ساخت واچر':
-            user_state[uid] = {"step": "voucher_plan"}
-            update.message.reply_text("نام پلن؟")
-            return
-
-        step = user_state.get(uid, {}).get("step")
-
-        if step == "add_plan":
-            user_state[uid]["plan"] = text
-            user_state[uid]["step"] = "add_count"
-            update.message.reply_text("چند تا؟")
-            return
-
-        if step == "add_count":
-            user_state[uid]["count"] = int(text)
-            user_state[uid]["step"] = "add_configs"
-            user_state[uid]["configs"] = []
-            update.message.reply_text("کانفیگ‌ها رو یکی یکی بفرست")
-            return
-
-        if step == "add_configs":
-            user_state[uid]["configs"].append(text)
-
-            if len(user_state[uid]["configs"]) >= user_state[uid]["count"]:
-                plan = user_state[uid]["plan"]
-
-                if plan not in db["inventory"]:
-                    db["inventory"][plan] = []
-
-                db["inventory"][plan].extend(user_state[uid]["configs"])
+    if step == "add_admin":
+        try:
+            new_admin = int(text)
+            if new_admin not in db["admins"]:
+                db["admins"].append(new_admin)
                 save_db()
+                update.message.reply_text("✅ اضافه شد")
+            else:
+                update.message.reply_text("⚠️ قبلاً هست")
+        except:
+            update.message.reply_text("❌ نامعتبر")
+        user_data[uid] = {}
+        return
 
-                update.message.reply_text("✅ ذخیره شد", reply_markup=admin_menu())
-                user_state[uid] = {}
-            return
+    # افزودن کانفیگ
+    if text == '➕ افزودن کانفیگ' and is_admin(uid):
+        user_data[uid] = {"step": "add_config"}
+        update.message.reply_text("آیدی پلن:")
+        return
 
-        if step == "voucher_plan":
-            user_state[uid]["plan"] = text
-            user_state[uid]["step"] = "voucher_count"
-            update.message.reply_text("چند تا از این پلن؟")
-            return
+    if step == "add_config":
+        pid = text
+        user_data[uid] = {"step": "save_config", "pid": pid}
+        update.message.reply_text("کانفیگ:")
+        return
 
-        if step == "voucher_count":
-            count = int(text)
-            plan = user_state[uid]["plan"]
+    if step == "save_config":
+        pid = user_data[uid]["pid"]
+        db["configs"].setdefault(pid, []).append(text)
+        save_db()
+        update.message.reply_text("✅ ذخیره شد")
+        user_data[uid] = {}
+        return
 
-            code = os.urandom(4).hex().upper()
+    # بکاپ
+    if text == '💾 بکاپ' and is_admin(uid):
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        name = f"{BACKUP_DIR}/backup_{datetime.now().strftime('%H%M%S')}.json"
+        shutil.copy(DB_FILE, name)
+        context.bot.send_document(uid, open(name, 'rb'))
+        return
 
-            db["vouchers"][code] = {
-                "plans": {plan: count},
-                "used": False
-            }
-            save_db()
+    if text == '📤 ریستور بکاپ' and is_admin(uid):
+        user_data[uid] = {"step": "restore"}
+        update.message.reply_text("فایل json ارسال کن")
+        return
 
-            update.message.reply_text(f"🎟 واچر:\n{code}", reply_markup=admin_menu())
-            user_state[uid] = {}
-            return
+# ---------- عکس ----------
+def handle_photo(update, context):
+    uid = str(update.effective_user.id)
 
-    # -------- کاربر --------
+    # شارژ کیف پول
+    if user_data.get(uid, {}).get("step") == "wallet_pay":
+        amount = user_data[uid]["amount"]
 
-    # اگر واچر وارد کرد
-    if text in db["vouchers"]:
-        v = db["vouchers"][text]
+        btn = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ تایید", callback_data=f"wallet_ok_{uid}_{amount}")
+        ]])
 
-        if v["used"]:
-            update.message.reply_text("❌ قبلاً استفاده شده")
-            return
+        context.bot.send_photo(
+            db["admins"][0],
+            update.message.photo[-1].file_id,
+            caption=f"شارژ {amount}",
+            reply_markup=btn
+        )
 
-        if uid not in db["resellers"]:
-            db["resellers"][uid] = {"stock": {}, "used": {}}
+        update.message.reply_text("ارسال شد")
+        user_data[uid] = {}
+        return
 
-        for plan, count in v["plans"].items():
-            db["resellers"][uid]["stock"][plan] = \
-                db["resellers"][uid]["stock"].get(plan, 0) + count
+# ---------- فایل ----------
+def handle_doc(update, context):
+    uid = str(update.effective_user.id)
 
-        v["used"] = True
+    if user_data.get(uid, {}).get("step") == "restore":
+        file = update.message.document
+        path = f"{BACKUP_DIR}/restore.json"
+
+        context.bot.get_file(file.file_id).download(path)
+        global db
+        db = json.load(open(path, 'r', encoding='utf-8'))
         save_db()
 
-        update.message.reply_text("✅ واچر فعال شد", reply_markup=reseller_menu())
-        return
+        update.message.reply_text("✅ ریستور شد")
+        user_data[uid] = {}
 
-    # موجودی
-    if text == '📦 موجودی من':
-        stock = db["resellers"][uid]["stock"]
-        used = db["resellers"][uid]["used"]
-
-        msg = "📦 موجودی:\n"
-        for p in stock:
-            msg += f"\n{p} → باقی: {stock[p]} | مصرف: {used.get(p,0)}"
-
-        update.message.reply_text(msg)
-        return
-
-    # ساخت کانفیگ
-    if text == '⚙️ ساخت کانفیگ':
-        plans = db["resellers"][uid]["stock"]
-        buttons = [[InlineKeyboardButton(p, callback_data=f"make_{p}")] for p in plans]
-        update.message.reply_text("پلن رو انتخاب کن:", reply_markup=InlineKeyboardMarkup(buttons))
-        return
-
-# -------- کالبک --------
+# ---------- callback ----------
 def handle_cb(update, context):
-    query = update.callback_query
-    uid = str(query.from_user.id)
-    query.answer()
+    q = update.callback_query
+    uid = str(q.from_user.id)
+    q.answer()
 
-    if query.data.startswith("make_"):
-        plan = query.data.split("_")[1]
+    # انتخاب مبلغ کیف پول
+    if q.data.startswith("wallet_") and q.data != "wallet_custom":
+        amount = int(q.data.split("_")[1])
+        user_data[uid] = {"step": "wallet_pay", "amount": amount}
+        q.message.reply_text(f"واریز {amount} به:\n{db['card']['number']}")
+        return
 
-        # 🔒 بخش حیاتی (جلوگیری از دابل مصرف)
-        with lock:
-            if db["resellers"][uid]["stock"].get(plan, 0) <= 0:
-                query.message.reply_text("❌ موجودی نداری")
-                return
+    if q.data == "wallet_custom":
+        user_data[uid] = {"step": "wallet_custom"}
+        q.message.reply_text("مبلغ:")
+        return
 
-            if len(db["inventory"].get(plan, [])) == 0:
-                query.message.reply_text("❌ انبار خالیه")
-                return
+    # تایید شارژ
+    if q.data.startswith("wallet_ok_"):
+        _, u, a = q.data.split("_")
+        db["users"][u]["wallet"] += int(a)
+        save_db()
+        context.bot.send_message(u, f"شارژ شد {a}")
+        q.message.reply_text("✅")
+        return
 
-            config = db["inventory"][plan].pop(0)
-
-            db["resellers"][uid]["stock"][plan] -= 1
-            db["resellers"][uid]["used"][plan] = \
-                db["resellers"][uid]["used"].get(plan, 0) + 1
-
-            save_db()
-
-        context.bot.send_message(uid, f"🎉 کانفیگ شما:\n\n{config}")
-
-# -------- اجرا --------
+# ---------- اجرا ----------
 def main():
-    Thread(target=run_web).start()
+    Thread(target=run_web, daemon=True).start()
 
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
     dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text, handle_msg))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_msg))
+    dp.add_handler(MessageHandler(Filters.photo, handle_photo))
+    dp.add_handler(MessageHandler(Filters.document, handle_doc))
     dp.add_handler(CallbackQueryHandler(handle_cb))
 
     updater.start_polling()
