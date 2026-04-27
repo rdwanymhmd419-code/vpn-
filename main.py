@@ -1,246 +1,288 @@
-import os, json, logging, shutil
+import os, json, logging
 from flask import Flask
 from threading import Thread
-from telegram import *
-from telegram.ext import *
+from telegram import ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters
 from datetime import datetime
 
-# ---------- تنظیمات ----------
-TOKEN = "8765075222:AAFT6p_zeYmEcahPoezxtUeqMlsGz0Ra35o"
+# -------- تنظیمات --------
+TOKEN = os.environ.get("8765075222:AAFT6p_zeYmEcahPoezxtUeqMlsGz0Ra35o")  # امن
 DB_FILE = "data.json"
-ADMINS_DEFAULT = [5993860770]
+DEFAULT_ADMINS = [5993860770]
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------- وب ----------
+# -------- وب --------
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "OK"
+    return "OK", 200
 
 def run_web():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
 
-# ---------- DB ----------
+# -------- دیتابیس --------
 def load_db():
     if os.path.exists(DB_FILE):
-        return json.load(open(DB_FILE,'r',encoding='utf-8'))
+        with open(DB_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    else:
+        data = {
+            "users": {},
+            "admins": DEFAULT_ADMINS.copy(),
+            "bot_enabled": True,
+            "test_enabled": True,
+            "test_reason": "",
+            "wallet_settings": {"amounts":[100000,300000,700000,1500000,2000000]},
+            "card":{"number":"0000","name":"NAME"},
+            "categories":{
+                "VIP":[{"id":1,"name":"20GB","price":80,"volume":"20GB"}]
+            },
+            "configs":{}
+        }
 
-    return {
-        "users": {},
-        "admins": ADMINS_DEFAULT.copy(),
-        "bot_enabled": True,
-        "test_enabled": True,
-        "test_reason": "",
-        "wallet_settings":{"amounts":[100000,300000,700000,1500000,2000000]},
-        "card":{"number":"0000","name":"NAME"},
-        "categories":{
-            "VIP":[{"id":1,"name":"20GB","price":80,"volume":"20GB"}]
-        },
-        "configs":{}
-    }
+    data.setdefault("admins", DEFAULT_ADMINS.copy())
+    data.setdefault("users", {})
+    data.setdefault("configs", {})
+    return data
 
-def save():
-    json.dump(db,open(DB_FILE,'w',encoding='utf-8'),ensure_ascii=False,indent=2)
+def save_db():
+    with open(DB_FILE, 'w', encoding='utf-8') as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
 
-db=load_db()
-user_data={}
+db = load_db()
+user_data = {}
 
-# ---------- utils ----------
+# -------- ابزار --------
 def is_admin(uid):
     return int(uid) in db["admins"]
 
 def is_owner(uid):
-    return int(uid)==db["admins"][0]
+    return int(uid) == db["admins"][0]
 
-# ---------- menus ----------
+# -------- منو --------
 def main_menu(uid):
-    kb=[['💰 خرید','💳 کیف پول'],['📂 سرویس‌ها','🎁 تست']]
+    kb = [
+        ['💰 خرید','💳 کیف پول'],
+        ['📂 سرویس‌ها','🎁 تست']
+    ]
     if is_admin(uid):
         kb.append(['⚙️ مدیریت'])
-    return ReplyKeyboardMarkup(kb,resize_keyboard=True)
+    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
 def admin_menu():
     return ReplyKeyboardMarkup([
         ['➕ ادمین','➕ کانفیگ'],
         ['💾 بکاپ','📥 ریستور'],
+        ['📌 پین پیام'],
         ['🔴 خاموش ربات','🟢 روشن ربات'],
         ['🎁 خاموش تست','🎁 روشن تست'],
         ['🔙 برگشت']
-    ],resize_keyboard=True)
+    ], resize_keyboard=True)
 
-# ---------- start ----------
-def start(update,context):
-    uid=str(update.effective_user.id)
+# -------- start --------
+def start(update, context):
+    uid = str(update.effective_user.id)
 
     if uid not in db["users"]:
-        db["users"][uid]={"wallet":0,"purchases":[],"tests":0}
-        save()
+        db["users"][uid] = {"wallet":0,"purchases":[],"tests":0}
+        save_db()
 
-    update.message.reply_text("خوش آمدی",reply_markup=main_menu(uid))
+    update.message.reply_text("خوش آمدید", reply_markup=main_menu(uid))
 
-# ---------- message ----------
-def msg(update,context):
-    uid=str(update.effective_user.id)
-    text=update.message.text
-    step=user_data.get(uid,{}).get("step")
+# -------- پیام --------
+def handle_msg(update, context):
+    uid = str(update.effective_user.id)
+    text = update.message.text
+    step = user_data.get(uid, {}).get("step")
 
+    # ربات خاموش
     if not db["bot_enabled"] and not is_admin(uid):
-        update.message.reply_text("⛔️ ربات خاموشه")
+        update.message.reply_text("⛔️ ربات خاموش است")
         return
 
-    # منو
-    if text=='🔙 برگشت':
-        user_data[uid]={}
-        start(update,context)
+    # برگشت
+    if text == '🔙 برگشت':
+        user_data[uid] = {}
+        start(update, context)
         return
 
     # مدیریت
-    if text=='⚙️ مدیریت' and is_admin(uid):
-        update.message.reply_text("پنل",reply_markup=admin_menu())
+    if text == '⚙️ مدیریت' and is_admin(uid):
+        update.message.reply_text("پنل مدیریت", reply_markup=admin_menu())
         return
 
     # افزودن ادمین
-    if text=='➕ ادمین':
+    if text == '➕ ادمین':
         if not is_owner(uid):
-            update.message.reply_text("فقط مالک")
+            update.message.reply_text("❌ فقط ادمین اصلی")
             return
-        user_data[uid]={"step":"add_admin"}
-        update.message.reply_text("آیدی:")
+        user_data[uid] = {"step":"add_admin"}
+        update.message.reply_text("آیدی عددی:")
         return
 
-    if step=="add_admin":
-        db["admins"].append(int(text))
-        save()
-        update.message.reply_text("اضافه شد")
-        user_data[uid]={}
+    if step == "add_admin":
+        try:
+            new_admin = int(text)
+            if new_admin not in db["admins"]:
+                db["admins"].append(new_admin)
+                save_db()
+                update.message.reply_text("✅ اضافه شد")
+            else:
+                update.message.reply_text("قبلاً هست")
+        except:
+            update.message.reply_text("❌ نامعتبر")
+        user_data[uid] = {}
+        return
+
+    # پین پیام
+    if text == '📌 پین پیام' and is_admin(uid):
+        user_data[uid] = {"step":"pin"}
+        update.message.reply_text("پیام را ارسال کن")
+        return
+
+    if step == "pin":
+        try:
+            context.bot.pin_chat_message(update.effective_chat.id, update.message.message_id)
+            update.message.reply_text("📌 پین شد")
+        except:
+            update.message.reply_text("❌ خطا")
+        user_data[uid] = {}
         return
 
     # خاموش/روشن
-    if text=='🔴 خاموش ربات':
-        db["bot_enabled"]=False
-        save()
+    if text == '🔴 خاموش ربات':
+        db["bot_enabled"] = False
+        save_db()
         update.message.reply_text("خاموش شد")
         return
 
-    if text=='🟢 روشن ربات':
-        db["bot_enabled"]=True
-        save()
+    if text == '🟢 روشن ربات':
+        db["bot_enabled"] = True
+        save_db()
         update.message.reply_text("روشن شد")
         return
 
     # تست
-    if text=='🎁 تست':
+    if text == '🎁 تست':
         if not db["test_enabled"]:
             update.message.reply_text(f"❌ {db['test_reason']}")
             return
-        update.message.reply_text("درخواست ثبت شد")
-        db["users"][uid]["tests"]+=1
-        save()
+        db["users"][uid]["tests"] += 1
+        save_db()
+        update.message.reply_text("ثبت شد")
         return
 
-    if text=='🎁 خاموش تست':
-        user_data[uid]={"step":"test_off"}
+    if text == '🎁 خاموش تست':
+        user_data[uid] = {"step":"test_off"}
         update.message.reply_text("دلیل:")
         return
 
-    if step=="test_off":
-        db["test_enabled"]=False
-        db["test_reason"]=text
-        save()
+    if step == "test_off":
+        db["test_enabled"] = False
+        db["test_reason"] = text
+        save_db()
         update.message.reply_text("خاموش شد")
-        user_data[uid]={}
+        user_data[uid] = {}
         return
 
-    if text=='🎁 روشن تست':
-        db["test_enabled"]=True
-        save()
+    if text == '🎁 روشن تست':
+        db["test_enabled"] = True
+        save_db()
         update.message.reply_text("روشن شد")
         return
 
     # کیف پول
-    if text=='💳 کیف پول':
-        bal=db["users"][uid]["wallet"]
-        btn=[]
+    if text == '💳 کیف پول':
+        bal = db["users"][uid]["wallet"]
+        keyboard = []
         for a in db["wallet_settings"]["amounts"]:
-            btn.append([InlineKeyboardButton(f"{a}",callback_data=f"w_{a}")])
-        btn.append([InlineKeyboardButton("دلخواه",callback_data="w_custom")])
-        update.message.reply_text(f"موجودی: {bal}",reply_markup=InlineKeyboardMarkup(btn))
+            keyboard.append([InlineKeyboardButton(f"{a:,}", callback_data=f"wallet_{a}")])
+        keyboard.append([InlineKeyboardButton("💵 دلخواه", callback_data="wallet_custom")])
+
+        update.message.reply_text(f"💰 موجودی: {bal:,}", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    if step=="custom_amount":
-        amount=int(text)
-        user_data[uid]={"step":"wallet_pay","amount":amount}
-        update.message.reply_text(f"واریز {amount}")
+    if step == "wallet_custom":
+        try:
+            amount = int(text)
+            if 50000 <= amount <= 5000000:
+                user_data[uid] = {"step":"wallet_pay","amount":amount}
+                update.message.reply_text(f"واریز {amount} به کارت:\n{db['card']['number']}")
+            else:
+                update.message.reply_text("❌ محدودیت")
+        except:
+            update.message.reply_text("❌ عدد")
         return
 
     # خرید
-    if text=='💰 خرید':
-        btn=[]
+    if text == '💰 خرید':
+        keyboard = []
         for cat in db["categories"].values():
             for p in cat:
-                btn.append([InlineKeyboardButton(p["name"],callback_data=f"buy_{p['id']}")])
-        update.message.reply_text("پلن:",reply_markup=InlineKeyboardMarkup(btn))
+                keyboard.append([InlineKeyboardButton(p["name"], callback_data=f"buy_{p['id']}")])
+
+        update.message.reply_text("پلن:", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-# ---------- photo ----------
-def photo(update,context):
-    uid=str(update.effective_user.id)
+# -------- عکس --------
+def handle_photo(update, context):
+    uid = str(update.effective_user.id)
 
-    # شارژ
-    if user_data.get(uid,{}).get("step")=="wallet_pay":
-        amount=user_data[uid]["amount"]
+    if user_data.get(uid, {}).get("step") == "wallet_pay":
+        amount = user_data[uid]["amount"]
 
-        btn=InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ تایید",callback_data=f"ok_{uid}_{amount}"),
-            InlineKeyboardButton("❌ رد",callback_data=f"rej_{uid}")
+        btn = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ تایید", callback_data=f"wallet_ok_{uid}_{amount}")
         ]])
 
-        context.bot.send_photo(db["admins"][0],
+        context.bot.send_photo(
+            db["admins"][0],
             update.message.photo[-1].file_id,
             caption=f"شارژ {amount}",
-            reply_markup=btn)
+            reply_markup=btn
+        )
 
         update.message.reply_text("ارسال شد")
-        user_data[uid]={}
+        user_data[uid] = {}
 
-# ---------- callback ----------
-def cb(update,context):
-    q=update.callback_query
-    uid=str(q.from_user.id)
+# -------- callback --------
+def handle_cb(update, context):
+    q = update.callback_query
+    uid = str(q.from_user.id)
     q.answer()
 
-    if q.data.startswith("w_"):
-        if q.data=="w_custom":
-            user_data[uid]={"step":"custom_amount"}
-            q.message.reply_text("مبلغ:")
-        else:
-            amount=int(q.data.split("_")[1])
-            user_data[uid]={"step":"wallet_pay","amount":amount}
-            q.message.reply_text(f"واریز {amount}")
+    if q.data.startswith("wallet_") and q.data != "wallet_custom":
+        amount = int(q.data.split("_")[1])
+        user_data[uid] = {"step":"wallet_pay","amount":amount}
+        q.message.reply_text(f"واریز {amount} به:\n{db['card']['number']}")
 
-    if q.data.startswith("ok_"):
-        _,u,a=q.data.split("_")
-        db["users"][u]["wallet"]+=int(a)
-        save()
-        context.bot.send_message(u,"شارژ شد")
+    if q.data == "wallet_custom":
+        user_data[uid] = {"step":"wallet_custom"}
+        q.message.reply_text("مبلغ:")
 
-# ---------- main ----------
+    if q.data.startswith("wallet_ok_"):
+        _, u, a = q.data.split("_")
+        db["users"][u]["wallet"] += int(a)
+        save_db()
+        context.bot.send_message(u, "شارژ شد")
+
+# -------- اجرا --------
 def main():
-    Thread(target=run_web).start()
+    Thread(target=run_web, daemon=True).start()
 
-    up=Updater(TOKEN,use_context=True)
-    dp=up.dispatcher
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-    dp.add_handler(CommandHandler("start",start))
-    dp.add_handler(MessageHandler(Filters.text,msg))
-    dp.add_handler(MessageHandler(Filters.photo,photo))
-    dp.add_handler(CallbackQueryHandler(cb))
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_msg))
+    dp.add_handler(MessageHandler(Filters.photo, handle_photo))
+    dp.add_handler(CallbackQueryHandler(handle_cb))
 
-    up.start_polling()
-    up.idle()
+    updater.start_polling()
+    updater.idle()
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
