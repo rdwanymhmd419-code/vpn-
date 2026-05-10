@@ -25,7 +25,7 @@ from telegram.ext import (
 # =========================
 
 TOKEN = "8681405252:AAH7ONTudaE34evtbxWeLdk0dtZc_XkULEA"
-ADMIN_ID = 5993860770
+ADMIN_ID = 5993860770,7935344235
 
 DB_FILE = "db.json"
 
