@@ -3546,3 +3546,1503 @@ def photo_handler(
             )
 
             return
+# =========================================
+# VPN SHOP BOT - PRODUCTION VERSION
+# PART 9
+# ادامه مستقیم فایل main.py
+# =========================================
+
+        # =====================================
+        # MIX RECEIPT
+        # =====================================
+
+        if step == "mix_receipt":
+
+            plan = state[uid]["plan"]
+
+            remain = state[uid]["remain"]
+
+            account_name = state[uid]["account_name"]
+
+            caption = (
+
+                "🔀 خرید ترکیبی\n\n"
+
+                f"👤 کاربر: {uid}\n"
+
+                f"📦 پلن: {plan['name']}\n"
+
+                f"👤 اکانت: {account_name}\n"
+
+                f"💰 باقی مانده: {remain:,}"
+
+            )
+
+            keyboard = [
+
+                [
+
+                    InlineKeyboardButton(
+
+                        "✅ تایید",
+
+                        callback_data=f"mixok_{uid}"
+
+                    ),
+
+                    InlineKeyboardButton(
+
+                        "❌ رد",
+
+                        callback_data=f"mixreject_{uid}"
+
+                    )
+
+                ]
+
+            ]
+
+            context.bot.send_photo(
+
+                MAIN_ADMIN,
+
+                update.message.photo[-1].file_id,
+
+                caption=caption,
+
+                reply_markup=InlineKeyboardMarkup(
+
+                    keyboard
+
+                )
+
+            )
+
+            update.message.reply_text(
+
+                db["texts"]["wait_admin"]
+
+            )
+
+            return
+
+        # =====================================
+        # BROADCAST PHOTO
+        # =====================================
+
+        if step == "broadcast_photo":
+
+            file_id = update.message.photo[-1].file_id
+
+            caption = state[uid].get(
+
+                "caption",
+
+                ""
+
+            )
+
+            success = 0
+
+            failed = 0
+
+            for user_id in db["users"]:
+
+                try:
+
+                    context.bot.send_photo(
+
+                        int(user_id),
+
+                        file_id,
+
+                        caption=caption
+
+                    )
+
+                    success += 1
+
+                except:
+
+                    failed += 1
+
+            update.message.reply_text(
+
+                f"✅ ارسال شد\n\n"
+
+                f"موفق: {success}\n"
+
+                f"ناموفق: {failed}"
+
+            )
+
+            state[uid] = {}
+
+            return
+
+        # =====================================
+        # PRIVATE MESSAGE PHOTO
+        # =====================================
+
+        if step == "send_private_photo":
+
+            target = state[uid]["target"]
+
+            file_id = update.message.photo[-1].file_id
+
+            caption = update.message.caption or ""
+
+            try:
+
+                context.bot.send_photo(
+
+                    int(target),
+
+                    file_id,
+
+                    caption=caption
+
+                )
+
+                update.message.reply_text(
+
+                    "✅ ارسال شد"
+
+                )
+
+            except:
+
+                update.message.reply_text(
+
+                    "❌ خطا"
+
+                )
+
+            state[uid] = {}
+
+            return
+
+    except Exception as e:
+
+        logger.error(traceback.format_exc())
+
+# =========================================
+# ADMIN CALLBACKS
+# =========================================
+
+def admin_callbacks(
+
+    update,
+
+    context
+
+):
+
+    try:
+
+        query = update.callback_query
+
+        data = query.data
+
+        uid = str(
+
+            query.from_user.id
+
+        )
+
+        # =====================================
+        # WALLET OK
+        # =====================================
+
+        if data.startswith("walletok_"):
+
+            parts = data.split("_")
+
+            target = parts[1]
+
+            amount = int(parts[2])
+
+            ensure_user(target)
+
+            db["users"][target]["wallet"] += amount
+
+            save_db()
+
+            context.bot.send_message(
+
+                int(target),
+
+                f"✅ کیف پول شما شارژ شد\n\n"
+
+                f"💰 مبلغ: {amount:,}"
+
+            )
+
+            query.edit_message_caption(
+
+                caption=query.message.caption + "\n\n✅ تایید شد"
+
+            )
+
+            return
+
+        # =====================================
+        # BUY OK
+        # =====================================
+
+        if data.startswith("buyok_"):
+
+            target = data.split("_")[1]
+
+            ensure_user(target)
+
+            st = state.get(target)
+
+            if not st:
+
+                query.message.reply_text(
+
+                    "❌ اطلاعات خرید یافت نشد"
+
+                )
+
+                return
+
+            plan = st["plan"]
+
+            account_name = st["account_name"]
+
+            # =================================
+            # AUTO SEND CONFIG
+            # =================================
+
+            if db["auto_send"]:
+
+                ok = deliver_config(
+
+                    context,
+
+                    target,
+
+                    plan,
+
+                    account_name
+
+                )
+
+                if ok:
+
+                    query.message.reply_text(
+
+                        "✅ کانفیگ ارسال شد"
+
+                    )
+
+                else:
+
+                    query.message.reply_text(
+
+                        "❌ کانفیگ موجود نیست"
+
+                    )
+
+            else:
+
+                context.bot.send_message(
+
+                    int(target),
+
+                    db["texts"]["wait_manual"]
+
+                )
+
+                state[MAIN_ADMIN_STR] = {
+
+                    "step": "manual_send",
+
+                    "target": target,
+
+                    "plan": plan
+
+                }
+
+                query.message.reply_text(
+
+                    "📨 کانفیگ را دستی ارسال کنید"
+
+                )
+
+            query.edit_message_caption(
+
+                caption=query.message.caption + "\n\n✅ تایید شد"
+
+            )
+
+            return
+
+        # =====================================
+        # MIX OK
+        # =====================================
+
+        if data.startswith("mixok_"):
+
+            target = data.split("_")[1]
+
+            ensure_user(target)
+
+            st = state.get(target)
+
+            if not st:
+
+                query.message.reply_text(
+
+                    "❌ اطلاعات یافت نشد"
+
+                )
+
+                return
+
+            plan = st["plan"]
+
+            account_name = st["account_name"]
+
+            wallet = db["users"][target]["wallet"]
+
+            db["users"][target]["wallet"] = 0
+
+            save_db()
+
+            if db["auto_send"]:
+
+                ok = deliver_config(
+
+                    context,
+
+                    target,
+
+                    plan,
+
+                    account_name
+
+                )
+
+                if ok:
+
+                    query.message.reply_text(
+
+                        "✅ کانفیگ ارسال شد"
+
+                    )
+
+                else:
+
+                    query.message.reply_text(
+
+                        "❌ کانفیگ موجود نیست"
+
+                    )
+
+            else:
+
+                context.bot.send_message(
+
+                    int(target),
+
+                    db["texts"]["wait_manual"]
+
+                )
+
+            query.edit_message_caption(
+
+                caption=query.message.caption + "\n\n✅ تایید شد"
+
+            )
+
+            return
+            # =========================================
+# VPN SHOP BOT - PRODUCTION VERSION
+# PART 10
+# ادامه مستقیم فایل main.py
+# =========================================
+
+        # =====================================
+        # BUY REJECT
+        # =====================================
+
+        if data.startswith("buyreject_"):
+
+            target = data.split("_")[1]
+
+            state[uid] = {
+
+                "step": "reject_reason",
+
+                "target": target
+
+            }
+
+            query.message.reply_text(
+
+                "❌ دلیل رد را وارد کنید"
+
+            )
+
+            return
+
+        # =====================================
+        # MIX REJECT
+        # =====================================
+
+        if data.startswith("mixreject_"):
+
+            target = data.split("_")[1]
+
+            state[uid] = {
+
+                "step": "reject_reason",
+
+                "target": target
+
+            }
+
+            query.message.reply_text(
+
+                "❌ دلیل رد را وارد کنید"
+
+            )
+
+            return
+
+        # =====================================
+        # WALLET REJECT
+        # =====================================
+
+        if data.startswith("walletreject_"):
+
+            target = data.split("_")[1]
+
+            state[uid] = {
+
+                "step": "wallet_reject_reason",
+
+                "target": target
+
+            }
+
+            query.message.reply_text(
+
+                "❌ دلیل رد شارژ کیف پول"
+
+            )
+
+            return
+
+        # =====================================
+        # ADD CONFIG
+        # =====================================
+
+        if data == "add_config":
+
+            keyboard = []
+
+            for plan in db["plans"]:
+
+                keyboard.append([
+
+                    InlineKeyboardButton(
+
+                        plan["name"],
+
+                        callback_data=f"cfgplan_{plan['id']}"
+
+                    )
+
+                ])
+
+            query.message.reply_text(
+
+                "📦 انتخاب پلن",
+
+                reply_markup=InlineKeyboardMarkup(
+
+                    keyboard
+
+                )
+
+            )
+
+            return
+
+        # =====================================
+        # CONFIG PLAN
+        # =====================================
+
+        if data.startswith("cfgplan_"):
+
+            plan_id = int(
+
+                data.split("_")[1]
+
+            )
+
+            state[uid] = {
+
+                "step": "config_count",
+
+                "plan_id": plan_id
+
+            }
+
+            query.message.reply_text(
+
+                "📥 چند کانفیگ می‌خواهید اضافه کنید؟"
+
+            )
+
+            return
+
+        # =====================================
+        # AUTO SEND TOGGLE
+        # =====================================
+
+        if data == "toggle_auto_send":
+
+            db["auto_send"] = (
+
+                not db["auto_send"]
+
+            )
+
+            save_db()
+
+            query.message.reply_text(
+
+                f"ارسال خودکار: "
+
+                f"{'فعال' if db['auto_send'] else 'غیرفعال'}"
+
+            )
+
+            return
+
+        # =====================================
+        # MANUAL SEND TOGGLE
+        # =====================================
+
+        if data == "toggle_manual_send":
+
+            db["manual_send"] = (
+
+                not db["manual_send"]
+
+            )
+
+            save_db()
+
+            query.message.reply_text(
+
+                f"ارسال دستی: "
+
+                f"{'فعال' if db['manual_send'] else 'غیرفعال'}"
+
+            )
+
+            return
+
+        # =====================================
+        # BACKUP CREATE
+        # =====================================
+
+        if data == "backup_create":
+
+            backup_name = (
+
+                f"backup_"
+
+                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+
+            )
+
+            with open(
+
+                backup_name,
+
+                "w",
+
+                encoding="utf-8"
+
+            ) as f:
+
+                json.dump(
+
+                    db,
+
+                    f,
+
+                    ensure_ascii=False,
+
+                    indent=4
+
+                )
+
+            context.bot.send_document(
+
+                MAIN_ADMIN,
+
+                open(backup_name, "rb")
+
+            )
+
+            query.message.reply_text(
+
+                "✅ بکاپ ارسال شد"
+
+            )
+
+            return
+
+        # =====================================
+        # BACKUP RESTORE
+        # =====================================
+
+        if data == "backup_restore":
+
+            state[uid] = {
+
+                "step": "restore_backup"
+
+            }
+
+            query.message.reply_text(
+
+                "📤 فایل بکاپ را ارسال کنید"
+
+            )
+
+            return
+
+        # =====================================
+        # BOT OFF
+        # =====================================
+
+        if data == "bot_off":
+
+            db["bot_enabled"] = False
+
+            save_db()
+
+            query.message.reply_text(
+
+                "🔴 ربات خاموش شد"
+
+            )
+
+            return
+
+        # =====================================
+        # BOT ON
+        # =====================================
+
+        if data == "bot_on":
+
+            db["bot_enabled"] = True
+
+            save_db()
+
+            query.message.reply_text(
+
+                "🟢 ربات روشن شد"
+
+            )
+
+            return
+
+        # =====================================
+        # PIN MESSAGE
+        # =====================================
+
+        if data == "pin_message":
+
+            state[uid] = {
+
+                "step": "pin_message"
+
+            }
+
+            query.message.reply_text(
+
+                "📌 پیام را ارسال کنید"
+
+            )
+
+            return
+
+    except Exception as e:
+
+        logger.error(traceback.format_exc())
+
+# =========================================
+# SEND CONFIG FUNCTION
+# =========================================
+
+def deliver_config(
+
+    context,
+
+    user_id,
+
+    plan,
+
+    account_name
+
+):
+
+    try:
+
+        plan_id = plan["id"]
+
+        if str(plan_id) not in db["configs"]:
+
+            return False
+
+        configs = db["configs"][str(plan_id)]
+
+        if len(configs) == 0:
+
+            return False
+
+        config = configs.pop(0)
+
+        save_db()
+
+        txt = db["texts"]["config_send"]
+
+        txt = txt.replace(
+
+            "{config}",
+
+            config
+
+        )
+
+        txt = txt.replace(
+
+            "{name}",
+
+            account_name
+
+        )
+
+        txt = txt.replace(
+
+            "{volume}",
+
+            str(plan["volume"])
+
+        )
+
+        txt = txt.replace(
+
+            "{days}",
+
+            str(plan["days"])
+
+        )
+
+        context.bot.send_message(
+
+            int(user_id),
+
+            txt
+
+        )
+
+        # SAVE SERVICE
+
+        db["users"][str(user_id)]["services"].append({
+
+            "name": plan["name"],
+
+            "volume": plan["volume"],
+
+            "days": plan["days"],
+
+            "date": str(datetime.now())
+
+        })
+
+        save_db()
+
+        return True
+
+    except Exception as e:
+
+        logger.error(e)
+
+        return False
+        # =========================================
+# VPN SHOP BOT - PRODUCTION VERSION
+# PART 11
+# ادامه مستقیم فایل main.py
+# =========================================
+
+# =========================================
+# DOCUMENT HANDLER
+# =========================================
+
+def document_handler(
+
+    update,
+
+    context
+
+):
+
+    try:
+
+        uid = str(
+
+            update.effective_user.id
+
+        )
+
+        step = state.get(uid, {}).get("step")
+
+        # =====================================
+        # RESTORE BACKUP
+        # =====================================
+
+        if step == "restore_backup":
+
+            file = update.message.document.get_file()
+
+            file.download(
+
+                "restore.json"
+
+            )
+
+            with open(
+
+                "restore.json",
+
+                "r",
+
+                encoding="utf-8"
+
+            ) as f:
+
+                new_db = json.load(f)
+
+            db.clear()
+
+            db.update(new_db)
+
+            save_db()
+
+            state[uid] = {}
+
+            update.message.reply_text(
+
+                "✅ بکاپ با موفقیت بازگردانی شد"
+
+            )
+
+            return
+
+    except Exception as e:
+
+        logger.error(traceback.format_exc())
+
+# =========================================
+# FINAL MESSAGE STEPS
+# =========================================
+
+def final_steps(
+
+    update,
+
+    context
+
+):
+
+    try:
+
+        uid = str(
+
+            update.effective_user.id
+
+        )
+
+        text = update.message.text
+
+        step = state.get(uid, {}).get("step")
+
+        # =====================================
+        # CONFIG COUNT
+        # =====================================
+
+        if step == "config_count":
+
+            try:
+
+                count = int(text)
+
+                if count < 1:
+
+                    update.message.reply_text(
+
+                        "❌ حداقل 1"
+
+                    )
+
+                    return
+
+                state[uid]["count"] = count
+
+                state[uid]["step"] = "configs_text"
+
+                update.message.reply_text(
+
+                    "📥 کانفیگ‌ها را ارسال کنید\n\n"
+
+                    "بین هر کانفیگ دو خط خالی بگذارید"
+
+                )
+
+            except:
+
+                update.message.reply_text(
+
+                    "❌ فقط عدد"
+
+                )
+
+            return
+
+        # =====================================
+        # CONFIGS TEXT
+        # =====================================
+
+        if step == "configs_text":
+
+            plan_id = state[uid]["plan_id"]
+
+            configs = [
+
+                x.strip()
+
+                for x in text.split("\n\n")
+
+                if x.strip()
+
+            ]
+
+            if len(configs) == 0:
+
+                update.message.reply_text(
+
+                    "❌ کانفیگی یافت نشد"
+
+                )
+
+                return
+
+            if str(plan_id) not in db["configs"]:
+
+                db["configs"][str(plan_id)] = []
+
+            added = 0
+
+            for cfg in configs:
+
+                if cfg not in db["configs"][str(plan_id)]:
+
+                    db["configs"][str(plan_id)].append(
+
+                        cfg
+
+                    )
+
+                    added += 1
+
+            save_db()
+
+            state[uid] = {}
+
+            update.message.reply_text(
+
+                f"✅ {added} کانفیگ ذخیره شد",
+
+                reply_markup=admin_menu()
+
+            )
+
+            return
+
+        # =====================================
+        # REJECT REASON
+        # =====================================
+
+        if step == "reject_reason":
+
+            target = state[uid]["target"]
+
+            context.bot.send_message(
+
+                int(target),
+
+                f"❌ خرید شما رد شد\n\n"
+
+                f"دلیل:\n{text}"
+
+            )
+
+            update.message.reply_text(
+
+                "✅ ارسال شد"
+
+            )
+
+            state[uid] = {}
+
+            return
+
+        # =====================================
+        # WALLET REJECT REASON
+        # =====================================
+
+        if step == "wallet_reject_reason":
+
+            target = state[uid]["target"]
+
+            context.bot.send_message(
+
+                int(target),
+
+                f"❌ شارژ کیف پول رد شد\n\n"
+
+                f"دلیل:\n{text}"
+
+            )
+
+            update.message.reply_text(
+
+                "✅ ارسال شد"
+
+            )
+
+            state[uid] = {}
+
+            return
+
+        # =====================================
+        # EDIT TEXT
+        # =====================================
+
+        if step == "edit_text":
+
+            key = state[uid]["key"]
+
+            db["texts"][key] = text
+
+            save_db()
+
+            state[uid] = {}
+
+            update.message.reply_text(
+
+                "✅ متن ذخیره شد",
+
+                reply_markup=admin_menu()
+
+            )
+
+            return
+
+        # =====================================
+        # CUSTOM WALLET
+        # =====================================
+
+        if step == "custom_wallet":
+
+            try:
+
+                amount = int(text)
+
+                if amount < 50000:
+
+                    update.message.reply_text(
+
+                        "❌ حداقل 50 هزار"
+
+                    )
+
+                    return
+
+                if amount > 5000000:
+
+                    update.message.reply_text(
+
+                        "❌ حداکثر 5 میلیون"
+
+                    )
+
+                    return
+
+                state[uid] = {
+
+                    "step": "wallet_receipt",
+
+                    "amount": amount
+
+                }
+
+                txt = (
+
+                    "💳 پرداخت\n\n"
+
+                    f"💰 مبلغ: {amount:,}\n\n"
+
+                    f"{db['card']['number']}\n"
+
+                    f"{db['card']['name']}\n\n"
+
+                    "📸 فیش را ارسال کنید"
+
+                )
+
+                update.message.reply_text(txt)
+
+            except:
+
+                update.message.reply_text(
+
+                    "❌ فقط عدد"
+
+                )
+
+            return
+
+        # =====================================
+        # MANUAL CONFIG SEND
+        # =====================================
+
+        if step == "manual_send":
+
+            target = state[uid]["target"]
+
+            context.bot.send_message(
+
+                int(target),
+
+                text
+
+            )
+
+            update.message.reply_text(
+
+                "✅ کانفیگ ارسال شد"
+
+            )
+
+            state[uid] = {}
+
+            return
+            # =========================================
+# VPN SHOP BOT - PRODUCTION VERSION
+# PART 12 (FINAL)
+# ادامه مستقیم فایل main.py
+# =========================================
+
+        # =====================================
+        # PIN MESSAGE
+        # =====================================
+
+        if step == "pin_message":
+
+            success = 0
+
+            failed = 0
+
+            for user_id in db["users"]:
+
+                try:
+
+                    msg = context.bot.send_message(
+
+                        int(user_id),
+
+                        text
+
+                    )
+
+                    context.bot.pin_chat_message(
+
+                        int(user_id),
+
+                        msg.message_id
+
+                    )
+
+                    success += 1
+
+                except:
+
+                    failed += 1
+
+            update.message.reply_text(
+
+                f"📌 انجام شد\n\n"
+
+                f"✅ موفق: {success}\n"
+
+                f"❌ ناموفق: {failed}"
+
+            )
+
+            state[uid] = {}
+
+            return
+
+        # =====================================
+        # SEND PRIVATE USER ID
+        # =====================================
+
+        if step == "send_private_id":
+
+            state[uid] = {
+
+                "step": "send_private_message",
+
+                "target": text
+
+            }
+
+            update.message.reply_text(
+
+                "📨 پیام را ارسال کنید\n"
+
+                "متن / عکس / فایل"
+
+            )
+
+            return
+
+        # =====================================
+        # SEND PRIVATE TEXT
+        # =====================================
+
+        if step == "send_private_message":
+
+            target = state[uid]["target"]
+
+            try:
+
+                context.bot.send_message(
+
+                    int(target),
+
+                    text
+
+                )
+
+                update.message.reply_text(
+
+                    "✅ ارسال شد"
+
+                )
+
+            except:
+
+                update.message.reply_text(
+
+                    "❌ خطا"
+
+                )
+
+            state[uid] = {}
+
+            return
+
+        # =====================================
+        # BROADCAST TEXT
+        # =====================================
+
+        if step == "broadcast_text":
+
+            success = 0
+
+            failed = 0
+
+            for user_id in db["users"]:
+
+                try:
+
+                    context.bot.send_message(
+
+                        int(user_id),
+
+                        text
+
+                    )
+
+                    success += 1
+
+                except:
+
+                    failed += 1
+
+            update.message.reply_text(
+
+                f"✅ ارسال شد\n\n"
+
+                f"موفق: {success}\n"
+
+                f"ناموفق: {failed}"
+
+            )
+
+            state[uid] = {}
+
+            return
+
+    except Exception as e:
+
+        logger.error(traceback.format_exc())
+
+# =========================================
+# MAIN
+# =========================================
+
+def main():
+
+    try:
+
+        logger.info(
+
+            "BOT STARTED"
+
+        )
+
+        updater = Updater(
+
+            TOKEN,
+
+            use_context=True
+
+        )
+
+        dp = updater.dispatcher
+
+        # =====================================
+        # HANDLERS
+        # =====================================
+
+        dp.add_handler(
+
+            CommandHandler(
+
+                "start",
+
+                start
+
+            )
+
+        )
+
+        dp.add_handler(
+
+            CallbackQueryHandler(
+
+                callback_handler
+
+            )
+
+        )
+
+        dp.add_handler(
+
+            CallbackQueryHandler(
+
+                admin_callbacks
+
+            )
+
+        )
+
+        dp.add_handler(
+
+            MessageHandler(
+
+                Filters.photo,
+
+                photo_handler
+
+            )
+
+        )
+
+        dp.add_handler(
+
+            MessageHandler(
+
+                Filters.document,
+
+                document_handler
+
+            )
+
+        )
+
+        dp.add_handler(
+
+            MessageHandler(
+
+                Filters.text & ~Filters.command,
+
+                final_steps
+
+            )
+
+        )
+
+        dp.add_handler(
+
+            MessageHandler(
+
+                Filters.text & ~Filters.command,
+
+                text_handler
+
+            )
+
+        )
+
+        # =====================================
+        # START POLLING
+        # =====================================
+
+        updater.start_polling(
+
+            drop_pending_updates=True
+
+        )
+
+        updater.idle()
+
+    except Exception as e:
+
+        logger.error(
+
+            traceback.format_exc()
+
+        )
+
+# =========================================
+# RUN
+# =========================================
+
+if __name__ == "__main__":
+
+    main()
