@@ -1146,8 +1146,225 @@ def callback_handler(update, context):
 
     elif data.startswith("cfg_"):
 
+        # =========================
+# CALLBACK
+# =========================
+
+def callback_handler(update, context):
+
+    query = update.callback_query
+
+    query.answer()
+
+    uid = str(query.from_user.id)
+
+    data = query.data
+
+    # =====================
+    # SHOW PLANS
+    # =====================
+
+    if data.startswith("cat_"):
+
+        cat_id = int(
+            data.split("_")[1]
+        )
+
+        keyboard = []
+
+        for plan in db["plans"]:
+
+            if plan["cat"] == cat_id:
+
+                keyboard.append([
+
+                    InlineKeyboardButton(
+
+                        f"{plan['name']} | "
+                        f"{plan['price']}",
+
+                        callback_data=
+                        f"buy_{plan['id']}"
+
+                    )
+
+                ])
+
+        query.message.reply_text(
+
+            "📦 پلن را انتخاب کنید",
+
+            reply_markup=
+            InlineKeyboardMarkup(
+                keyboard
+            )
+
+        )
+
+    # =====================
+    # BUY
+    # =====================
+
+    elif data.startswith("buy_"):
+
         plan_id = int(
             data.split("_")[1]
+        )
+
+        plan = None
+
+        for p in db["plans"]:
+
+            if p["id"] == plan_id:
+
+                plan = p
+
+                break
+
+        if not plan:
+
+            query.message.reply_text(
+                "❌ پلن پیدا نشد"
+            )
+
+            return
+
+        configs = db["configs"].get(
+            str(plan_id),
+            []
+        )
+
+        if len(configs) == 0:
+
+            query.message.reply_text(
+                "❌ کانفیگ موجود نیست"
+            )
+
+            return
+
+        config = configs.pop(0)
+
+        db["configs"][
+            str(plan_id)
+        ] = configs
+
+        db["users"][uid]["services"].append({
+
+            "name":
+            plan["name"],
+
+            "config":
+            config
+
+        })
+
+        save_db()
+
+        query.message.reply_text(
+
+            "✅ خرید انجام شد\n\n"
+
+            f"{config}"
+
+        )
+
+    # =====================
+    # ADD PLAN
+    # =====================
+
+    elif data.startswith("addplan_"):
+
+        cat_id = int(
+            data.split("_")[1]
+        )
+
+        state[uid] = {
+
+            "step":
+            "add_plan_name",
+
+            "cat":
+            cat_id
+
+        }
+
+        query.message.reply_text(
+            "📦 نام پلن را ارسال کنید"
+        )
+
+    # =====================
+    # DELETE CATEGORY
+    # =====================
+
+    elif data.startswith("delcat_"):
+
+        cat_id = int(
+            data.split("_")[1]
+        )
+
+        db["categories"] = [
+
+            x for x in db["categories"]
+
+            if x["id"] != cat_id
+
+        ]
+
+        save_db()
+
+        query.message.reply_text(
+            "✅ دسته حذف شد"
+        )
+
+    # =====================
+    # DELETE PLAN
+    # =====================
+
+    elif data.startswith("delplan_"):
+
+        plan_id = int(
+            data.split("_")[1]
+        )
+
+        db["plans"] = [
+
+            x for x in db["plans"]
+
+            if x["id"] != plan_id
+
+        ]
+
+        save_db()
+
+        query.message.reply_text(
+            "✅ پلن حذف شد"
+        )
+
+    # =====================
+    # CONFIG
+    # =====================
+
+    elif data.startswith("cfg_"):
+
+        plan_id = int(
+            data.split("_")[1]
+        )
+
+        state[uid] = {
+
+            "step":
+            "config_text",
+
+            "plan":
+            plan_id
+
+        }
+
+        query.message.reply_text(
+
+            "🔗 کانفیگ ها را\n"
+            "هر خط جدا ارسال کنید"
+
         )
 
         state[uid
