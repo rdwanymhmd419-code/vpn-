@@ -10,8 +10,8 @@ from datetime import datetime
 from telegram import *
 from telegram.ext import *
 
-TOKEN = os.getenv("8681405252:AAH7ONTudaE34evtbxWeLdk0dtZc_XkULEA")
-ADMIN_ID = int(os.getenv("5993860770"))
+TOKEN = "8681405252:AAH7ONTudaE34evtbxWeLdk0dtZc_XkULEA"
+ADMIN_ID = 5993860770
 
 DB_FILE = "db.json"
 
